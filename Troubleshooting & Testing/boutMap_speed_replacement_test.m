@@ -1,0 +1,424 @@
+%Testing replacing boutMap and steps by appending to data. 
+
+testData = data; 
+testWalkingData = walkingData; 
+testParam = param; 
+
+
+%boutMap replacement
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%min number of frames for a walking bout
+minBoutLength = 100;
+
+%get walking bouts
+boutNums = unique(data.walking_bout_number);
+
+% define butterworth filter for hilbert transform.
+[A,B,C,D] = butter(1,[0.02 0.4],'bandpass');
+sos = ss2sos(A,B,C,D);
+
+%there are multiple of the same walking_bout_numbers in the same file, so 
+%detect when there's a break in frame number and map old to new bout id
+trueBoutNum = 0;
+
+%add columns to fill in data
+data.true_walking_bout_number = NaN(height(data),1);
+for leg = 1:param.numLegs
+    data.([param.legs{leg} '_swing_stance']) = NaN(height(data),1);
+    data.([param.legs{leg} '_step_num']) = NaN(height(data),1); %unique step num
+    data.([param.legs{leg} '_num_steps']) = NaN(height(data),1); %num steps this leg takes in this bout
+    data.([param.legs{leg} '_phase']) = NaN(height(data),1); %E_y phase
+end
+
+for bout = 1:height(boutNums)
+    %get idxs of all data with this 'walking_bout_number'
+    boutIdxs = find(data.walking_bout_number == boutNums(bout)); 
+    if height(boutIdxs) > minBoutLength % a walking bout must be at least n=minBoutLength frames. 
+        %find where the frame number jumps, indicating multiple walking bouts with same 'walking_bout_number'
+        [~, locs] = findpeaks(diff(boutIdxs), 'MinPeakProminence', 2);
+        %find how many walking bout have same bout number 
+        if isempty(locs); numSubBouts = 1; else; numSubBouts = height(locs)+1; end
+        locs = [0; locs; height(boutIdxs)];
+
+        for subBout = 1:numSubBouts
+            
+           % make sure there's more than n=minBoutLength frames in the subbout
+           if width(boutIdxs(locs(subBout)+1):boutIdxs(locs(subBout+1))) > minBoutLength
+
+               %get bout idxs in data
+               subBoutIdxs = boutIdxs(locs(subBout)+1):boutIdxs(locs(subBout+1));
+               
+               %map old bout num to new bout num
+               trueBoutNum = trueBoutNum + 1; 
+               data.true_walking_bout_number(subBoutIdxs) = trueBoutNum; %save unique bout num 
+               
+               for leg = 1:param.numLegs
+                   %calcualte swing and stance: 
+                   %set full bout to NaN
+                   swing_stance = NaN(width(subBoutIdxs), 1);
+                   step_num = NaN(width(subBoutIdxs), 1);
+                   num_steps = 0;
+                   
+                   %get joint data, determine swing and stance regions and fill in
+                   %with ones and zeros respectively 
+                   tarsus_y_position = [param.legs{leg} 'E_y'];
+                   tarsus_z_position = [param.legs{leg} 'E_z'];
+                   this_data_tar_y_pos = data.(tarsus_y_position)(subBoutIdxs);
+                   this_data_tar_z_pos = data.(tarsus_z_position)(subBoutIdxs);
+                       
+                   prom_y = 0.2;
+                   [ssPks_y, ssPkLocs_y] = findpeaks(this_data_tar_y_pos, 'MinPeakProminence', prom_y);
+                   [ssTrs_y, ssTrLocs_y] = findpeaks(this_data_tar_y_pos*-1, 'MinPeakProminence', prom_y); %for T1: min E_y position = stance end
+                   
+                   prom_z = 0.1; 
+                   [ssPks_z, ssPkLocs_z] = findpeaks(smooth(this_data_tar_z_pos), 'MinPeakProminence', prom_z);
+                   [ssTrs_z, ssTrLocs_z] = findpeaks(smooth(this_data_tar_z_pos)*-1, 'MinPeakProminence', prom_z); %for T1: min E_z position = stance start
+                   
+                   prom_diff_z = 0.1; %0.03; 
+                   [ssPks_diff_z, ssPkLocs_diff_z] = findpeaks(diff(smooth(this_data_tar_z_pos)), 'MinPeakProminence', prom_diff_z);
+                   [ssTrs_diff_z, ssTrLocs_diff_z] = findpeaks(diff(smooth(this_data_tar_z_pos))*-1, 'MinPeakProminence', prom_diff_z); %for T1: min E_z position = stance start
+                                      
+                   %classify swing stance
+                   nan_leg = false; %for detecting if step parsing went wrong
+                   if contains(param.legs{leg}, '1') %T1 legs
+                      % min E_z position = stance start (ssTrLocs_z)
+                      % min E_y position = stance end (ssTrLocs_y)
+                      
+                      for pk = 1:height(ssTrLocs_z)-1
+                         stance_start = ssTrLocs_z(pk);
+                         stance_end = ssTrLocs_y(find(ssTrLocs_y > stance_start, 1, 'first'));
+                         swing_start = stance_end+1;
+                         swing_end = ssTrLocs_z(pk+1)-1;
+                         
+                         if isempty(stance_start) | isempty(stance_end) | isempty(swing_start)| isempty(swing_end)
+                             %something went wrong with finding steps, nan
+                             %this whole legs to ease future analyses
+                             nan_leg = true;
+                         else
+                              num_steps = num_steps+1;
+                              swing_stance(stance_start:stance_end) = 0; %stance 
+                              swing_stance(swing_start:swing_end) = 1; %swing
+                              step_num(stance_start:swing_end) = num_steps; %this step number 
+                          end
+                      end
+                      
+%                       plot(this_data_tar_y_pos); hold on; ... 
+%                       plot(this_data_tar_z_pos); ...
+%                       scatter(ssTrLocs_y, ssTrs_y); ... 
+%                       scatter(ssTrLocs_z, ssTrs_z); ... 
+%                       plot(swing_stance); ...
+%                       hold off;
+
+                   elseif  contains(param.legs{leg}, '2') %T2 legs
+
+
+                      % max E_y position or min E_z position close by = stance start (ssPkLocs_y or ssTrLocs_z)
+                      % min E_y position = stance end (ssTrLocs_y)
+
+                      for pk = 1:height(ssPkLocs_y)-1
+                         fixLastStanceEnd = false; 
+                         stance_start = ssPkLocs_y(pk);
+                         %check if there's an ssTrLocs_z min within a few frames after the current stance_start. 
+                         %ssPkLocs_y often predicts stance start a few frames too early, so using the ssTrLocs_z if possible is more accurate. 
+                         numFramesToLook = 5; %TODO assess this for other bouts
+                         idxsToSearch = stance_start+1:stance_start+numFramesToLook; 
+                         [localPks, localLocs] = findpeaks(this_data_tar_z_pos(idxsToSearch)*-1); %check if there are any z position mins a few frames after the current stance start (max y)
+                         if ~isempty(localPks) 
+                             stance_start = stance_start + localLocs(1); %shift stance start to the first z min
+                             %need to update the previous swing end if there is one
+                             if pk > 1
+                                 fixLastStanceEnd = true;
+                             end
+                         end
+                         stance_end = ssTrLocs_y(find(ssTrLocs_y > stance_start, 1, 'first'));
+                         swing_start = stance_end+1;
+                         swing_end = ssPkLocs_y(pk+1)-1;
+                         
+                         if isempty(stance_start) | isempty(stance_end) | isempty(swing_start)| isempty(swing_end)
+                             %something went wrong with finding steps, nan
+                             %this whole legs to ease future analyses
+                             nan_leg = true;
+                         else
+                              num_steps = num_steps+1;
+                              swing_stance(stance_start:stance_end) = 0; %stance 
+                              swing_stance(swing_start:swing_end) = 1; %swing
+                              step_num(stance_start:swing_end) = num_steps; %this step number 
+                              if fixLastStanceEnd
+                                swing_stance(stance_start-localLocs(1):stance_start) = 1; %swing (fill in end of last swing since true stance start for this step is after y max, where last swing ended). 
+                                step_num(stance_start-localLocs(1):stance_start) = num_steps; %this step number 
+                              end
+                          end
+                      end
+
+%                       plot(this_data_tar_z_pos); hold on; ...
+%                       plot(this_data_tar_z_pos_abs_diff_smooth); ...
+%                       scatter(ssPkLocs_diff_z, ssPks_diff_z); ...
+%                       scatter(ssTrLocs_diff_z, ssTrs_diff_z); ...
+%                       plot(swing_stance);
+%                       hold off;
+%                        
+%                           
+%           plot(this_data_tar_z_pos); hold on; plot(diff(smooth(this_data_tar_z_pos))); ...
+%           plot(abs(diff(smooth(this_data_tar_z_pos)))); plot(swing_stance); ... 
+%           plot(this_data_tar_y_pos); plot(data.([param.legs{leg} 'E_x'])(subBoutIdxs)); scatter(ssTrLocs_diff_z, ssTrs_diff_z);hold off
+%                     
+
+                      
+                   elseif  contains(param.legs{leg}, '3') %T3 legs
+                      %  max E_y position = stance start (ssPkLocs_y)
+                      %  min E_z position = stance end (ssTrLocs_z) 
+                      
+                      for pk = 1:height(ssPkLocs_y)-1
+                         stance_start = ssPkLocs_y(pk);
+                         stance_end = ssTrLocs_z(find(ssTrLocs_z > stance_start, 1, 'first'));
+                         swing_start = stance_end+1;
+                         swing_end = ssPkLocs_y(pk+1)-1;
+                         
+                         if isempty(stance_start) | isempty(stance_end) | isempty(swing_start)| isempty(swing_end)
+                             %something went wrong with finding steps, nan
+                             %this whole legs to ease future analyses
+                             nan_leg = true;
+                         else
+                              num_steps = num_steps+1;
+                              swing_stance(stance_start:stance_end) = 0; %stance 
+                              swing_stance(swing_start:swing_end) = 1; %swing
+                              step_num(stance_start:swing_end) = num_steps; %this step number 
+                          end
+                      end
+                      
+%                       plot(this_data_tar_y_pos); hold on; ... 
+%                       plot(this_data_tar_z_pos*-1); ...
+%                       scatter(ssPkLocs_y, ssPks_y); ... 
+%                       scatter(ssTrLocs_z, ssTrs_z); ... 
+%                       plot(swing_stance); ...
+%                       hold off;
+                      
+                      
+                   else
+                       error('not a leg');
+                   end
+                   
+                   %clear leg if step parsing went wrong
+                   if nan_leg
+                       swing_stance = NaN(width(subBoutIdxs), 1);
+                   end
+                   
+                   data.([param.legs{leg} '_swing_stance'])(subBoutIdxs) = swing_stance; %save swing/stance
+                   data.([param.legs{leg} '_step_num'])(subBoutIdxs) = step_num; %save unique step numbers within a bout
+                   data.([param.legs{leg} '_num_steps'])(subBoutIdxs) = max(step_num); %save total number of steps this leg takes in this bout
+                                                         
+                   %calcualte phase (hilbert transform):
+                   joint_data = data.([param.legs{leg} 'E_y'])(subBoutIdxs); %calculate phase from tarsi y position data
+                   normed_data = (joint_data-mean(joint_data, 'omitnan'))/std(joint_data, 'omitnan');
+                   bfilt_data = sosfilt(sos, normed_data);  %bandpass frequency filter for hilbert transform     
+
+                   data.([param.legs{leg} '_phase'])(subBoutIdxs) = angle(hilbert(bfilt_data)); %save E_y phase
+            
+               end
+           end
+        end
+    end
+end
+
+% Make sure each leg took at least m=minStepsPerLeg steps. (otherwise it probably wasn't very good walking)
+minStepsPerLeg = 3;
+boutTooShortIdxs = find(data.L1_num_steps < minStepsPerLeg | data.L2_num_steps < minStepsPerLeg | data.L3_num_steps < minStepsPerLeg | ...
+                data.R1_num_steps < minStepsPerLeg | data.R2_num_steps < minStepsPerLeg | data.R3_num_steps < minStepsPerLeg);
+%NaN bouts with too few steps per leg
+data.true_walking_bout_number(boutTooShortIdxs) = NaN;
+for leg = 1:param.numLegs
+    data.([param.legs{leg} '_swing_stance'])(boutTooShortIdxs) = NaN;
+    data.([param.legs{leg} '_step_num'])(boutTooShortIdxs) = NaN; %unique step num
+    data.([param.legs{leg} '_num_steps'])(boutTooShortIdxs) = NaN; %num steps this leg takes in this bout
+    data.([param.legs{leg} '_phase'])(boutTooShortIdxs) = NaN; %E_y phase
+end
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%steps replacement
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+warning('off','MATLAB:table:RowsAddedExistingVars') %turn off warning for filling only sub columns at a time for each row. 
+
+%legs and joints to take phase of 
+joints = {'A_abduct', 'A_flex', 'A_rot', 'A_rot_unwrapped', 'B_flex', 'B_rot', 'B_rot_unwrapped', 'C_flex', 'C_rot', 'C_rot_unwrapped', 'D_flex', 'E_x', 'E_y', 'E_z'};
+for leg = 1:param.numLegs
+    for joint = 1:width(joints)
+        data.([param.legs{leg} joints{joint} '_phase']) = NaN(height(data),1);
+    end
+end
+
+% define butterworth filter for hilbert transform.
+[A,B,C,D] = butter(1,[0.02 0.4],'bandpass');
+sos = ss2sos(A,B,C,D);
+
+steps = struct;
+for leg = 1:param.numLegs
+    steps.leg(leg).meta = table('Size', [0,31], ...
+        'VariableTypes',{'string', 'cell', 'double', 'double', ...
+                         'double', 'double', 'double','double', 'double', ...
+                         'double', 'double', 'double', ...
+                         'double', 'double', 'double','double', 'double', 'double', ...
+                         'double', 'double' ,'double', 'double', ...
+                         'double', 'double', 'double', 'double', ...
+                         'double', 'string', 'double', 'string', 'double'}, ...
+        'VariableNames',{'fly', 'dataStepIdxs', 'dataStanceEndIdx', 'boutNum', ...
+                         'stepNum', 'rep', 'cond' 'step_duration', 'step_frequency', ...
+                         'step_length', 'swing_duration', 'stance_duration', ...
+                         'AEP_E_x', 'AEP_E_y', 'AEP_E_z', 'PEP_E_x' , 'PEP_E_y', 'PEP_E_z'...
+                         'avg_speed_x', 'avg_speed_y', 'avg_speed_z', 'avg_acceleration_x', ...
+                         'avg_acceleration_y', 'avg_acceleration_z', 'avg_heading', 'avg_temp', ...
+                         'percent_stim', 'stim_on_region', 'stim_on_phase_E_y', 'stim_off_region', 'stim_off_phase_E_y'});
+end
+
+leg_step_idxs = [0, 0, 0, 0, 0, 0]; %row idxs for saving data in steps struct
+
+bouts = unique(data.true_walking_bout_number(~isnan(data.true_walking_bout_number))); 
+for bout = 1:height(bouts) %bout is boutNum
+    try % try this bout, if there's an error, skip and move onto the next bout. 
+        thisBoutNum = bouts(bout); 
+       
+        % idxs in data
+        this_bout_idxs = find(data.true_walking_bout_number == thisBoutNum); %idx into data
+
+        % calculate metrics that are the same across legs:
+
+        % fly number  
+        this_fly = data.flyid{this_bout_idxs(1)}; 
+
+        rep = data.rep(this_bout_idxs(1)); 
+        cond = data.condnum(this_bout_idxs(1)); 
+
+        for leg = 1:param.numLegs
+            %indices within bout
+            this_swing_stance = data.([param.legs{leg} '_swing_stance'])(this_bout_idxs);
+            this_step_nums = data.([param.legs{leg} '_step_num'])(this_bout_idxs);
+            this_unique_steps = unique(this_step_nums(~isnan(this_step_nums))); %to ensure this all still works if a step num is skipped. 
+
+            if ~(sum(isnan(this_swing_stance)) == height(this_swing_stance)) %if no steps, only nans, skip this leg 
+                %add joint phases to data
+                for joint = 1:width(joints)
+                    joint_data = data.([param.legs{leg} joints{joint}])(this_bout_idxs);
+                    %calculate phase (hilbert transform)
+                    normed_data = (joint_data-mean(joint_data, 'omitnan'))/std(joint_data, 'omitnan');
+                    bfilt_data = sosfilt(sos, normed_data);  %bandpass frequency filter for hilbert transform            
+                    phase_data = angle(hilbert(bfilt_data));
+                    data.([param.legs{leg} joints{joint} '_phase'])(this_bout_idxs) = phase_data; %save phase data
+                end
+                    
+                %calculate and save metrics and data for each step    
+                for st = 1:height(this_unique_steps)
+                    this_step_num = this_unique_steps(st); 
+                    %step idxs in data
+                    this_step_idxs = this_bout_idxs(this_step_nums == this_step_num); %idx into data
+                    this_stance_idxs = this_step_idxs(data.([param.legs{leg} '_swing_stance'])(this_step_idxs) == 0); %idx into data
+                    this_swing_idxs = this_step_idxs(data.([param.legs{leg} '_swing_stance'])(this_step_idxs) == 1); %idx into data
+
+                    %calculate step duration 
+                    step_duration = height(this_step_idxs)/param.fps;
+
+                    %calculate step frequency
+                    step_frequency = 1/step_duration;
+
+                    %calculate step length 
+                    shift_val = 10; %add to each position value to make them all positive. 0 point from anipose is L1_BC position.
+                    start_positions_raw = [data.([param.legs{leg} 'E_x'])(this_stance_idxs(1)), data.([param.legs{leg} 'E_y'])(this_stance_idxs(1)), data.([param.legs{leg} 'E_z'])(this_stance_idxs(1))];
+                    end_positions_raw = [data.([param.legs{leg} 'E_x'])(this_stance_idxs(end)), data.([param.legs{leg} 'E_y'])(this_stance_idxs(end)), data.([param.legs{leg} 'E_z'])(this_stance_idxs(end))];
+                    start_positions = start_positions_raw + shift_val;
+                    end_positions = end_positions_raw + shift_val;
+                    step_length = sqrt((end_positions(1)-start_positions(1))^2 + (end_positions(2)-start_positions(2))^2 + (end_positions(3)-start_positions(3))^2);            
+
+                    %AEP PEP
+                    AEP_E_x = start_positions_raw(1);
+                    AEP_E_y = start_positions_raw(2);
+                    AEP_E_z = start_positions_raw(3);
+                    PEP_E_x = end_positions_raw(1);
+                    PEP_E_y = end_positions_raw(2);
+                    PEP_E_z = end_positions_raw(3);
+
+                    %calculate swing and stance duration 
+                    swing_duration = height(this_swing_idxs)/param.fps;
+                    stance_duration = height(this_stance_idxs)/param.fps;
+
+                    %calculate avgs: heading, speed, acceleration, temp
+                    avg_heading = mean(data.fictrac_heading_deg(this_step_idxs), 'omitnan');
+                    avg_speed_x = mean(data.fictrac_delta_rot_lab_x_mms(this_step_idxs), 'omitnan');
+                    avg_speed_y = mean(data.fictrac_delta_rot_lab_y_mms(this_step_idxs), 'omitnan');
+                    avg_speed_z = mean(data.fictrac_delta_rot_lab_z_mms(this_step_idxs), 'omitnan');
+                    avg_acceleration_x = mean(diff(data.fictrac_delta_rot_lab_x_mms(this_step_idxs))/step_duration, 'omitnan');
+                    avg_acceleration_y = mean(diff(data.fictrac_delta_rot_lab_y_mms(this_step_idxs))/step_duration, 'omitnan');
+                    avg_acceleration_z = mean(diff(data.fictrac_delta_rot_lab_z_mms(this_step_idxs))/step_duration, 'omitnan');
+                    avg_temp = mean(data.temp(this_step_idxs), 'omitnan');
+
+                    %calculate percent opto and onset (0 = fully no stim, 1 = fully stim)
+                    this_stim = data.stim(this_step_idxs);
+                    percent_stim = mean(this_stim, 'omitnan');  
+                    %default stim on off vals
+                    stim_on_region = NaN;
+                    stim_on_phase_E_y = NaN;
+                    stim_off_region = NaN;
+                    stim_off_phase_E_y = NaN;
+                    %set stim on and off vals
+                    if any(diff(this_stim) == 1) %stim comes on during step
+                        stim_on_idx = this_step_idxs(diff(this_stim) == 1)+1; %idx in data
+                        regions = {'stance', 'swing'};
+                        stim_on_region = regions{data.([param.legs{leg} '_swing_stance'])(stim_on_idx)+1};
+                        stim_on_phase_E_y = data.([param.legs{leg} 'E_y_phase'])(stim_on_idx)+1;
+                    end
+                    if any(diff(this_stim) == -1) %stim turns off during step
+                        stim_off_idx = this_step_idxs(diff(this_stim) == -1)+1; %idx in data
+                        regions = {'stance', 'swing'};
+                        stim_off_region = regions{data.([param.legs{leg} '_swing_stance'])(stim_off_idx)+1};
+                        stim_off_phase =  data.([param.legs{leg} 'E_y_phase'])(stim_off_idx)+1;
+                    end
+
+                    %save everything! - all metrics + joint and phase variables. 
+                    leg_step_idxs(leg) = leg_step_idxs(leg)+1; %update leg step idx.
+
+                    steps.leg(leg).meta.fly(leg_step_idxs(leg)) = this_fly;
+                    steps.leg(leg).meta.dataStepIdxs{leg_step_idxs(leg)} = this_step_idxs;
+                    steps.leg(leg).meta.dataStanceEndIdx(leg_step_idxs(leg)) = this_stance_idxs(end); %last frame of stance
+                    steps.leg(leg).meta.boutNum(leg_step_idxs(leg)) = thisBoutNum;
+                    steps.leg(leg).meta.stepNum(leg_step_idxs(leg)) = this_step_num;
+                    steps.leg(leg).meta.rep(leg_step_idxs(leg)) = rep;
+                    steps.leg(leg).meta.cond(leg_step_idxs(leg)) = cond;            
+                    steps.leg(leg).meta.step_frequency(leg_step_idxs(leg)) = step_frequency;
+                    steps.leg(leg).meta.step_duration(leg_step_idxs(leg)) = step_duration;
+                    steps.leg(leg).meta.step_length(leg_step_idxs(leg)) = step_length;
+                    steps.leg(leg).meta.swing_duration(leg_step_idxs(leg)) = swing_duration;
+                    steps.leg(leg).meta.stance_duration(leg_step_idxs(leg)) = stance_duration;
+                    steps.leg(leg).meta.AEP_E_x(leg_step_idxs(leg)) = AEP_E_x;
+                    steps.leg(leg).meta.AEP_E_y(leg_step_idxs(leg)) = AEP_E_y;
+                    steps.leg(leg).meta.AEP_E_z(leg_step_idxs(leg)) = AEP_E_z;
+                    steps.leg(leg).meta.PEP_E_x(leg_step_idxs(leg)) = PEP_E_x;
+                    steps.leg(leg).meta.PEP_E_y(leg_step_idxs(leg)) = PEP_E_y;
+                    steps.leg(leg).meta.PEP_E_z(leg_step_idxs(leg)) = PEP_E_z;
+                    steps.leg(leg).meta.avg_heading(leg_step_idxs(leg)) = avg_heading;
+                    steps.leg(leg).meta.avg_speed_x(leg_step_idxs(leg)) = avg_speed_x;
+                    steps.leg(leg).meta.avg_speed_y(leg_step_idxs(leg)) = avg_speed_y;
+                    steps.leg(leg).meta.avg_speed_z(leg_step_idxs(leg)) = avg_speed_z;
+                    steps.leg(leg).meta.avg_acceleration_x(leg_step_idxs(leg)) = avg_acceleration_x;
+                    steps.leg(leg).meta.avg_acceleration_y(leg_step_idxs(leg)) = avg_acceleration_y;
+                    steps.leg(leg).meta.avg_acceleration_z(leg_step_idxs(leg)) = avg_acceleration_z;
+                    steps.leg(leg).meta.avg_temp(leg_step_idxs(leg)) = avg_temp;
+                    steps.leg(leg).meta.percent_stim(leg_step_idxs(leg)) = percent_stim; 
+                    steps.leg(leg).meta.stim_on_region(leg_step_idxs(leg)) = stim_on_region; 
+                    steps.leg(leg).meta.stim_on_phase_E_y(leg_step_idxs(leg)) = stim_on_phase_E_y; 
+                    steps.leg(leg).meta.stim_off_region(leg_step_idxs(leg)) = stim_off_region; 
+                    steps.leg(leg).meta.stim_off_phase_E_y(leg_step_idxs(leg)) = stim_off_phase_E_y;             
+                end        
+            end
+        end
+    catch
+        %do nothing, go to next bout. 
+        fprintf(['\nerror: bout ' num2str(bout) ' leg ' num2str(leg) ' st ' num2str(st)]);
+    end
+end
+
+
+
