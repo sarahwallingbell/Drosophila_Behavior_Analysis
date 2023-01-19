@@ -1,0 +1,178 @@
+% Preprocessing A: Make parquet summary files for specific datasets.
+% 
+% Load in pk file(s) and delete/combine fly data to generate one parquet file 
+% with all flies in a specific dataset.  
+% 
+% Sarah Walling-Bell, October 2022
+
+clear all; close all; clc;
+
+%% Before running this script:
+%     (1) make a flyFile (list of all flies that should be in this dataset) using A_makeFlyFile.m
+%     (2) populate the dataset specific sheets of datasetSummary.xlsx withn parquet files that could have data for this dataset. 
+
+%% File with list of flies that should be in this dataset
+
+%%%% Intact onball
+% 'claw_flex_act_intact_onball', ... 
+% 'claw_flex_sil_intact_onball', ...
+% 'claw_ext_act_intact_onball', ... 
+% 'claw_ext_sil_intact_onball', ...
+% 'sh_control_act_intact_onball', ...
+% 'sh_control_sil_intact_onball', ...
+% 'sh_control_all_intact_onball', ...
+% 'hook_flex_act_intact_onball', ... 
+% 'hook_flex_sil_intact_onball', ...
+% 'hook_ext_act_intact_onball', ... 
+% 'hook_ext_sil_intact_onball', ...
+% 'club_JR175_act_intact_onball', ... 
+% 'club_JR175_sil_intact_onball', ...
+% 'club_JR299_act_intact_onball', ... 
+% 'club_JR299_sil_intact_onball', ...
+% 'iav_act_intact_onball', ... 
+% 'iav_sil_intact_onball', ...
+
+%%%% Laser power
+% 'claw_flex_act_intact_onball_pwr', ... 
+% 'claw_flex_sil_intact_onball_pwr', ...
+% 'claw_ext_act_intact_onball_pwr', ... 
+% 'claw_ext_sil_intact_onball_pwr', ...
+% 'sh_ctl_act_intact_onball_pwr', ...
+% 'sh_ctl_sil_intact_onball_pwr', ...
+% 'hook_flex_act_intact_onball_pwr', ... 
+% 'hook_flex_sil_intact_onball_pwr', ...
+% 'hook_ext_act_intact_onball_pwr', ... 
+TODO: 'hook_ext_sil_intact_onball_pwr' %none of the data files had flies for this file. 
+% 'club_175_act_intact_onball_pwr', ... 
+% 'club_175_sil_intact_onball_pwr', ...
+% 'club_299_act_intact_onball_pwr', ... 
+% 'club_299_sil_intact_onball_pwr', ...
+% 'iav_act_intact_onball_pwr', ... 
+% 'iav_sil_intact_onball_pwr', ...
+
+%%%% Headless & offball 
+
+%%%% Hair plates
+
+files = { 'hook_ext_sil_intact_onball_pwr'};
+
+
+run_C_makeMetadata_fn = 1; % 1 (yes), 0 (no) - run C_makeMetadata_fn on the dataset we create here. If yes, the data will be ready for plotting after running this script (assuming the dataset has all flies).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+datasetSummaryPath = 'G:\.shortcut-targets-by-id\15uXSKut68NlHyR8OywpWbt0zXFWyC-43\Sarah\Data\Datasets\datasetSummary.xlsx'; 
+datasetSummary = readtable(datasetSummaryPath); %list of which parquet files comprise which datasets
+
+pqSavePath = 'G:\.shortcut-targets-by-id\15uXSKut68NlHyR8OywpWbt0zXFWyC-43\Sarah\Data\Datasets\'; %where to save output parquet files 
+missingSavePath = 'G:\.shortcut-targets-by-id\15uXSKut68NlHyR8OywpWbt0zXFWyC-43\Sarah\Data\Datasets\missingFlies\'; %where to save list of missing flies in pq file
+
+flyFilePath = 'G:\.shortcut-targets-by-id\15uXSKut68NlHyR8OywpWbt0zXFWyC-43\Sarah\Data\Datasets\flyFiles\'; %location of fly files that say which flies should be in each dataset
+dataFilePath = 'G:\.shortcut-targets-by-id\10pxdlRXtzFB-abwDGi0jOGOFFNm3pmFK\Tuthill Lab Shared\Pierre\summaries\v3-b4\lines\'; %location of parquet data files.  
+
+columns = getColumns(); %columns that should be in parquet files. 
+
+initial_vars = who;
+initial_vars{end+1} = 'f';
+for f = 1:width(files) %loop through files.
+%     clear thisData data flyIds flies keepFlies missingFlies fly flyFile
+    clearvars('-except',initial_vars{:}); initial_vars = who;
+
+    fprintf(['\n\nMaking dataset ' num2str(f) '/' num2str(width(files)) ': ' files{f}]); %print update
+
+    %get list of flies that should be in this dataset
+    flyFile = readtable([flyFilePath '' files{f} '.xlsx']); %flies that should be in dataset
+    %generate list of flyids to search for
+    flyIds = {};
+    for fly = 1:height(flyFile)
+        flyIds{fly} = [flyFile.Date{fly} ' Fly ' flyFile.Fly_{fly}];
+    end
+
+    %get list of parquets that comprise this dataset
+    opts = detectImportOptions(datasetSummaryPath, 'Sheet', files{f});
+    thisDatasetSummary = readtable(datasetSummaryPath, opts);
+    parquets = thisDatasetSummary.parquets;
+    parquets = parquets(~cellfun(@isempty, parquets)); %get rid of empty cells
+    
+    %load file and save fly data in this dataset  
+    data = []; %for building the final dataset
+    usedParquets = []; %indicates which parquet files had data used in this dataset (in case some didn't, don't want to load in the future)
+    for file = 1:height(parquets)
+
+        fprintf(['\nAssessing file ' num2str(file) '/' num2str(height(parquets))]); %printupdate
+
+        %load in a parquet summary file 
+        thisData = parquetread([dataFilePath '' parquets{file}]); 
+
+        %check if missing variables, if so padd with nans
+        missingVars = find(~ismissing(columns, thisData.Properties.VariableNames)); 
+        for var = 1:width(missingVars)
+            thisData.(columns{missingVars(var)}) = NaN(height(thisData), 1);
+        end
+
+        %find extraneous flies 
+        flies = unique(thisData.flyid);
+        keepFlies = {}; 
+        for fly = 1:height(flies) 
+            if any(contains(flyIds, flies{fly}))
+                keepFlies{end+1} = flies{fly};
+            end
+        end
+
+        %delete any extra flies
+        keepIdxs = contains(thisData.flyid, keepFlies);
+        thisData = thisData(keepIdxs,:);
+
+        %save whether or not this parquet file contained any fly data for this dataset 
+        if sum(keepIdxs) == 0; usedParquets(file) = 0; %not used, no data was saved
+        else; usedParquets(file) = 1; %used, some data was saved
+        end
+        
+        %save data with correct flies. 
+        data = [data; thisData];
+    end
+    
+    %note any missing flies in data 
+    missingFlies = {}; 
+    for fly = 1:width(flyIds) 
+        if ~contains(unique(data.flyid), flyIds{fly})
+            missingFlies{end+1} = flyIds{fly};
+        end
+    end
+
+    %save data
+    parquetwrite([pqSavePath files{f}], data, "VariableCompression", 'snappy'); 
+
+    %save which parquet files comprise this dataset
+    datasetIdx = strcmp(datasetSummary.dataset, files{f});
+    datasetSummary.rawDatasetMade{datasetIdx} = date; %today's date  (date of dataset creation)
+    datasetSummary.numFlies(datasetIdx) = height(unique(data.flyid)); %num flies in dataset
+    datasetSummary.numMissingFlies(datasetIdx) = width(missingFlies); %num missing flies 
+    datasetSummary.rawDatasetPath{datasetIdx} = [pqSavePath files{f} '.parquet']; %path to dataset
+
+    %write to dataset overview excel sheet 
+    writetable(datasetSummary, datasetSummaryPath); %save updated table
+    %write to dataset specific excel sheet 
+    writecell(['parquets'; {parquets{find(usedParquets)}}'],datasetSummaryPath, 'sheet',files{f}, 'writeMode', 'overwritesheet'); %parquet summary flies that make up this dataset
+    writematrix(['flies'; unique(data.flyid)],datasetSummaryPath, 'sheet', files{f}, 'range', 'B1'); %flies in dataset
+    writecell(['missingFlies'; missingFlies'],datasetSummaryPath, 'sheet', files{f}, 'range', 'C1'); %flies missing from dataset
+    
+    fprintf('\nDataset complete!');
+
+    %generate metadata if desired
+    if run_C_makeMetadata_fn
+
+        fprintf(['\nMaking metadata for dataset ' num2str(f) '/' num2str(width(files)) ': ' files{f}]); %print update
+
+        if contains(files{f}, 'intact_onball') %only run this metadata for flies that walk
+            C_makeMetadata_fn(data, files{f}, datasetSummaryPath);
+        else
+            C_makeMetadata_nonWalking_fn(data, files{f}, datasetSummaryPath); %metadata maker for non walking flies
+        end
+
+        fprintf('\nMetadata complete!');
+    end
+
+end
+    
+fprintf('\n\nDone making all files!\n'); %print update
+
