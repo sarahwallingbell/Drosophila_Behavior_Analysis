@@ -27,3 +27,16 @@ To analyze how joint angles change as a function of fly velocity, run [Walking_X
 
 ### Quantifying the effect of perturbing hair plate neurons. 
 The main script for analyzing the effect of perturbing coxa hair plate 8 (CHP8) neurons is [hair_plate_01112023.m](https://github.com/sarahwallingbell/Drosophila_Behavior_Analysis/blob/main/Hair%20Plate/hair_plate_01112023.m). This code loops through four CHP8 datasets and the corresponding split half control data, plotting figures that asses changes in body-coxa joint angles (abduction, rotation, flexion) when activating or silencing the CHP8 neurons. 
+
+
+
+
+### Other useful code
+- The code in the 'preprocessing' folder fixes the raw joint data output from anipose and calculates metadata (step phase, unique walking bout number, etc.) for the data and saves a processed summary parquet file. The main function for this process is [make_metadata_main.m](https://github.com/sarahwallingbell/Drosophila_Behavior_Analysis/blob/main/Preprocessing/make_metadata_main.m). 
+
+- Code used to compare joint angles calculated with two different Anipose reference frames is here [reference_frame_comparison_01132023.m](https://github.com/sarahwallingbell/Drosophila_Behavior_Analysis/blob/main/Troubleshooting%20%26%20Testing/reference_frame_comparison_01132023.m). 
+
+- Code used to transform the FicTrac data from camera to animal coordinates is in the 'Fictrac Correction' folder. 
+
+- Code used to analyze if flies have different walking kinematics at the same speed across temperatures is in the 'Walking x Temp' folder. 
+
