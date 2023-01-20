@@ -1,5 +1,4 @@
 # Drosophila_Behavior_Analysis
-
 Analysis code for experiments combining high-speed video and 3D pose estimation of all leg joints with spatially targeted optogenetic perturbation of proprioceptor subtypes. 
 
 Fruit flies were tethered and placed on a spherical treadmill. A laser optogenetically activated or silenced genetically labelled proprioceptive neurons in the left front leg. Six cameras recorded the flies movements. We used Anipose to quantify 3D position and joint angles of all leg joints (body-coxa, coxa-femur, femur-tibia, and tibia-tarsus). We used Fictrac to track the velocity (forward, rotational, sideslip) of the fly. 
@@ -24,8 +23,7 @@ There are two scripts that analyze the regular (not laser power) datasets. Each 
 To check if ramping up the laser power increased or altered the behavioral effect of the stimulus, use the [intact_onball_power_11162022.m](https://github.com/sarahwallingbell/Drosophila_Behavior_Analysis/blob/main/FeCO/intact_onball_power_11162022.m) script. This script loops through laser power datasets and corresponding controls, and plots figures showing how changes in joint angles at stim onset (if any) change as laser power increases. 
 
 ### Assessing how joint angles change across the step cycle in correlation with changes in overall fly velocity. 
-
-
+To analyze how joint angles change as a function of fly velocity, run [Walking_X_Speed_Main_01182023.m](https://github.com/sarahwallingbell/Drosophila_Behavior_Analysis/blob/main/Walking%20x%20Speed/Walking_X_Speed_Main_01182023.m). This script loads split half control data (activation and silencing data combined) and plots figures showing how joint angles change across the step cycle as a function of forward and rotational velocity. It also shows how the tarsus tip position (anterior extreme and posterior extreme positions) and step length and duration shift wtih fly velocity. 
 
 ### Quantifying the effect of perturbing hair plate neurons. 
 The main script for analyzing the effect of perturbing coxa hair plate 8 (CHP8) neurons is [hair_plate_01112023.m](https://github.com/sarahwallingbell/Drosophila_Behavior_Analysis/blob/main/Hair%20Plate/hair_plate_01112023.m). This code loops through four CHP8 datasets and the corresponding split half control data, plotting figures that asses changes in body-coxa joint angles (abduction, rotation, flexion) when activating or silencing the CHP8 neurons. 
